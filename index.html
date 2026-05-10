@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Zero-Ghost Live Radar</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { margin: 0; padding: 0; background: #f8fafc; overflow: hidden; }
+    #map { width: 100vw; height: 100vh; }
+
+    /* ELASTIC STRETCHING BOX */
+    #draggableBox {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 2000; background: white;
+      display: inline-flex; width: auto; min-width: 90px;
+      align-items: center; gap: 10px;
+      padding: 10px 22px; border-radius: 50px;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.15); border: 2px solid #22c55e;
+      cursor: move; user-select: none; white-space: nowrap; 
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .status-dot { width: 10px; height: 10px; background: #22c55e; border-radius: 50%; animation: pulse-dot 1.2s infinite; }
+    @keyframes pulse-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.3; } }
+    .count-text { font-family: 'Segoe UI', sans-serif; font-weight: 800; color: #1e293b; font-size: 18px; }
+
+    .blinking-marker { width: 12px !important; height: 12px !important; border-radius: 50%; border: 3px solid white; animation: marker-pulse 1.5s infinite; }
+    .red { background: #FF0000; box-shadow: 0 0 15px #ef4444; }
+    .green { background: #FF0000; box-shadow: 0 0 15px #22c55e; }
+    @keyframes marker-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.6; } }
+  </style>
+</head>
+<body>
+
+  <div id="draggableBox">
+    <div class="status-dot"></div>
+    <div class="count-text" id="liveCounter">Live-0</div>
+  </div>
+
+  <div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, push, set, onValue, onDisconnect, remove, get } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA5LrVUt1ySlFTt3hQ24qALlqXYffv1pag",
+    authDomain: "live-web-traffic-letterc-8f8bf.firebaseapp.com",
+    databaseURL: "https://live-web-traffic-letterc-8f8bf-default-rtdb.firebaseio.com",
+    projectId: "live-web-traffic-letterc-8f8bf",
+    storageBucket: "live-web-traffic-letterc-8f8bf.firebasestorage.app",
+    messagingSenderId: "54493984326",
+    appId: "1:54493984326:web:9e569aa3da36f1e3c0bc47"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const activeMarkers = {}; 
+
+  const map = L.map('map', { zoomControl: false }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+
+  // 1. DYNAMIC WATERFALL LOCATION
+  async function getDetailedCoords() {
+    const apis = ['https://ipapi.co/json/', 'https://ipwho.is/', 'https://freeipapi.com/api/json'];
+    for (let url of apis) {
+      try {
+        const res = await fetch(url);
+        const d = await res.json();
+        const lat = d.latitude || d.lat;
+        const lng = d.longitude || d.lng || d.lon;
+        if (lat && lat !== 0) return { lat, lng, city: d.city || "Visitor" };
+      } catch (e) {}
+    }
+    return { lat: 23.81, lng: 90.41, city: "Dhaka User" }; 
+  }
+
+  // 2. UNIFIED SYNC (Forces Map & Box to match exactly)
+  onValue(ref(db, 'online_presence'), (snapshot) => {
+    const data = snapshot.val() || {};
+    const count = Object.keys(data).length;
+    
+    // Stretch/Shrink Box
+    document.getElementById('liveCounter').innerText = `Live-${count}`;
+
+    // Remove old markers
+    Object.keys(activeMarkers).forEach(id => {
+      if (!data[id]) {
+        map.removeLayer(activeMarkers[id]);
+        delete activeMarkers[id];
+      }
+    });
+
+    // Add new markers
+    Object.keys(data).forEach(id => {
+      if (!activeMarkers[id]) {
+        const val = data[id];
+        const icon = L.divIcon({
+          className: '',
+          html: `<div class="blinking-marker ${val.color}"></div>`,
+          iconSize: [22, 22], iconAnchor: [11, 11]
+        });
+        activeMarkers[id] = L.marker([val.lat, val.lng], { icon }).addTo(map).bindPopup(val.city);
+      }
+    });
+  });
+
+  // 3. THE "GHOST-WIPE" JOIN
+  async function join() {
+    const presenceRef = ref(db, 'online_presence');
+    
+    // Check if we need to wipe (Only wipe if count looks wrong/stale)
+    const snap = await get(presenceRef);
+    if (snap.size > 5) { // If there are more than 5 (highly likely ghosts), wipe once.
+        await remove(presenceRef);
+    }
+
+    const loc = await getDetailedCoords();
+    const myRef = push(presenceRef);
+    
+    set(myRef, {
+      lat: loc.lat, lng: loc.lng, city: loc.city,
+      color: Math.random() > 0.5 ? 'red' : 'green'
+    });
+
+    onDisconnect(myRef).remove();
+  }
+
+  join();
+
+  // 4. DRAGGABLE LOGIC
+  const box = document.getElementById("draggableBox");
+  let drag = false, ox, oy;
+  box.onmousedown = (e) => { drag = true; ox = e.clientX - box.offsetLeft; oy = e.clientY - box.offsetTop; };
+  document.onmousemove = (e) => { if (drag) { box.style.left = (e.clientX - ox) + "px"; box.style.top = (e.clientY - oy) + "px"; box.style.transform = "none"; } };
+  document.onmouseup = () => drag = false;
+</script>
+</body>
+</html>
