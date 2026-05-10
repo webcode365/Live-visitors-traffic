@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Live Radar Fix</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<style>
+html, body {
+  margin:0;
+  padding:0;
+  height:100%;
+  width:100%;
+  overflow:hidden;
+  background:#0b0e14;
+}
+
+#map {
+  width:100vw;
+  height:100vh;
+}
+
+.leaflet-container {
+  background:#0b0e14 !important;
+}
+
+/* DOT */
+.radar-dot {
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#ff3b3b;
+  border:1px solid white;
+  box-shadow:0 0 12px #ff3b3b;
+  animation:pulse 1.3s infinite;
+}
+
+@keyframes pulse {
+  0% { transform:scale(2); opacity:2; }
+  50% { transform:scale(2.2); opacity:0.4; }
+  100% { transform:scale(1); opacity:.1; }
+}
+</style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, push, set, onChildAdded } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA5LrVUt1ySlFTt3hQ24qALlqXYffv1pag",
+  authDomain: "live-web-traffic-letterc-8f8bf.firebaseapp.com",
+  databaseURL: "https://live-web-traffic-letterc-8f8bf-default-rtdb.firebaseio.com",
+  projectId: "live-web-traffic-letterc-8f8bf",
+  storageBucket: "live-web-traffic-letterc-8f8bf.firebasestorage.app",
+  messagingSenderId: "54493984326",
+  appId: "1:54493984326:web:9e569aa3da36f1e3c0bc47"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+/* 🌍 MAP */
+const map = L.map('map').setView([20,0],2);
+
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom:19
+}).addTo(map);
+
+/* =========================
+   🌐 SAFE LOCATION GETTER
+   ========================= */
+async function getLocationSafe(){
+  try {
+    const res = await fetch("https://ipapi.co/json/");
+    const d = await res.json();
+
+    if(d.latitude && d.longitude){
+      return {
+        lat:d.latitude,
+        lng:d.longitude,
+        city:d.city || "Unknown",
+        country:d.country_name || "Unknown"
+      };
+    }
+  } catch(e){}
+
+  /* 🧠 FALLBACK (IMPORTANT) */
+  return {
+    lat:23.8103,   // fallback Dhaka
+    lng:90.4125,
+    city:"Fallback",
+    country:"BD"
+  };
+}
+
+/* =========================
+   📡 TRACK & SHOW YOU
+   ========================= */
+async function trackMe(){
+  const me = await getLocationSafe();
+
+  const data = {
+    ...me,
+    time:Date.now()
+  };
+
+  /* PUSH TO FIREBASE */
+  await set(push(ref(db,"visitors")), data);
+
+  /* SHOW IMMEDIATELY (ENSURES YOU SEE YOURSELF) */
+  addMarker(data);
+}
+
+/* =========================
+   🔴LIVE MARKERS
+   ========================= */
+function addMarker(v){
+  const icon = L.divIcon({
+    className:"",
+    html:`<div class="radar-dot"></div>`,
+    iconSize:[14,14],
+    iconAnchor:[7,7]
+  });
+
+  L.marker([v.lat,v.lng],{icon})
+    .addTo(map)
+    .bindPopup(`${v.city}, ${v.country}`);
+}
+
+/* REALTIME OTHERS */
+onChildAdded(ref(db,"visitors"), snap=>{
+  addMarker(snap.val());
+});
+
+/* RUN */
+trackMe();
+</script>
+
+</body>
+</html>
